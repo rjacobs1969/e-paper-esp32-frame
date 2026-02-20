@@ -121,7 +121,7 @@ long getSecondsTillNextImage(long delta, long deltaSinceTimeObtain){
     currentSeconds += (totalRuntime / 1000);
     Serial.println("Current seconds: " + String(currentSeconds));
     // Calculate the total seconds from midnight to 10:00 AM
-    int targetSeconds = 10 * 3600;
+    int targetSeconds = 5 * 3600;
 
     // Calculate the time difference
     int timeDiff;

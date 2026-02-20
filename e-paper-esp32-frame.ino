@@ -116,12 +116,12 @@ void setup() {
   // Turn on the transistor to power the external components
   pinMode(TRANSISTOR_PIN, OUTPUT);
   digitalWrite(TRANSISTOR_PIN, LOW); 
-  delay(10);
+  delay(100);
 
   // Initialize the SD card
   while(!SD.begin(SD_CS_PIN, vspi)){
     Serial.println("Card Mount Failed");
-    hibernate();
+    hibernateShort();
   }
 
   // Initialize Wifi and get the time
@@ -153,6 +153,18 @@ void loop() {
     hibernate();
 }
 
+void hibernateShort() {
+    Serial.println("start 60s nap");
+
+    // Ensure TRANSISTOR_PIN stays HIGH during deep sleep
+    gpio_hold_en((gpio_num_t)TRANSISTOR_PIN);
+    gpio_deep_sleep_hold_en();
+
+    //esp_deep_sleep(static_cast<uint64_t>(getSecondsTillNextImage(delta, deltaSinceTimeObtain))* 1e6);
+    // sleep for 5 seconds debug
+     esp_deep_sleep(60* 1e6); // RJDEBIG
+}
+
 void hibernate() {
     Serial.println("start sleep");
 
@@ -162,7 +174,7 @@ void hibernate() {
 
     esp_deep_sleep(static_cast<uint64_t>(getSecondsTillNextImage(delta, deltaSinceTimeObtain))* 1e6);
     // sleep for 5 seconds debug
-    // esp_deep_sleep(5* 1e6);
+    // esp_deep_sleep(60* 1e6); // RJDEBIG
 }
 
 // Function to check if the SD files have changed and update the preferences if needed
