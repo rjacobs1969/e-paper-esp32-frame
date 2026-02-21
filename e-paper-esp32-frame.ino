@@ -9,6 +9,7 @@
 #include "esp_adc_cal.h"
 #include "driver/adc.h"
 #include <pngle.h>
+#include "dither.h"
 
 //This is the pin for the transistor that powers the external components
 #define TRANSISTOR_PIN 26
@@ -32,6 +33,8 @@ uint16_t width() { return EPD_WIDTH; }
 uint16_t height() { return EPD_HEIGHT; }
 
 SPIClass vspi(VSPI); // VSPI for SD card
+
+DitherMode ditherMode = DITHER_NONE;
 
 
 // Color palette for dithering — Spectra 6 (7IN3E) display
@@ -303,9 +306,75 @@ String getNextFile(){
   return path;
 }
 
-// Whether to apply Floyd-Steinberg dithering when rendering images.
-// Will be set dynamically per file later; for now defaults to off.
-bool useDithering = false;
+// ============================================================
+//  Dithering helpers — controlled by the 3rd filename segment
+//  Filename format: DD_MM_X_name.ext  where X is:
+//    F = Floyd-Steinberg,  H = Halftone,  O = Ordered,
+//    P = Pop-art,  N = None (nearest palette colour)
+// ============================================================
+
+// Parse the 3rd underscore-delimited segment of the bare filename.
+DitherMode parseDitherMode(const String &filepath) {
+  // Extract bare filename (after last '/')
+  int lastSlash = filepath.lastIndexOf('/');
+  String name = (lastSlash >= 0) ? filepath.substring(lastSlash + 1) : filepath;
+  // Find 3rd segment: skip first two underscores
+  int u1 = name.indexOf('_');
+  if (u1 < 0) return DITHER_NONE;
+  int u2 = name.indexOf('_', u1 + 1);
+  if (u2 < 0) return DITHER_NONE;
+  // Character right after 2nd underscore
+  char c = (u2 + 1 < (int)name.length()) ? toupper(name.charAt(u2 + 1)) : 'N';
+  switch (c) {
+    case 'F': return DITHER_FLOYD;
+    case 'H': return DITHER_HALFTONE;
+    case 'O': return DITHER_ORDERED;
+    case 'P': return DITHER_POPART;
+    default:  return DITHER_NONE;
+  }
+}
+
+// ---- 4×4 Bayer matrix for ordered dithering (values 0–15) ----
+static const uint8_t bayer4[4][4] = {
+  {  0,  8,  2, 10 },
+  { 12,  4, 14,  6 },
+  {  3, 11,  1,  9 },
+  { 15,  7, 13,  5 }
+};
+
+// ---- Halftone 4×4 threshold matrix (values 0–15) ----
+static const uint8_t halftone4[4][4] = {
+  { 13,  9,  5,  1 },
+  {  6,  2, 14, 10 },
+  {  8, 12,  0,  4 },
+  {  3,  7, 11, 15 }
+};
+
+// Apply a threshold-matrix dither: perturb r,g,b then map to nearest palette.
+int ditherThreshold(uint8_t r, uint8_t g, uint8_t b,
+                    int col, int row, const uint8_t mat[4][4]) {
+  // threshold in -128..+128 range derived from 0-15 matrix
+  int t = ((int)mat[row & 3][col & 3] - 8) * 16; // range ≈ -128..+112
+  uint8_t rr = constrain((int)r + t, 0, 255);
+  uint8_t gg = constrain((int)g + t, 0, 255);
+  uint8_t bb = constrain((int)b + t, 0, 255);
+  return depalette(rr, gg, bb);
+}
+
+// Pop-art style: boost saturation + contrast then map to nearest palette.
+int ditherPopArt(uint8_t r, uint8_t g, uint8_t b) {
+  // Convert to simple saturation boost: push channels away from grey
+  int avg = ((int)r + (int)g + (int)b) / 3;
+  // Increase saturation by 80% and contrast by stretching
+  int rr = constrain((int)(avg + ((int)r - avg) * 3), 0, 255);
+  int gg = constrain((int)(avg + ((int)g - avg) * 3), 0, 255);
+  int bb = constrain((int)(avg + ((int)b - avg) * 3), 0, 255);
+  // Posterize to 2 levels per channel (0 or 255)
+  rr = (rr > 127) ? 255 : 0;
+  gg = (gg > 127) ? 255 : 0;
+  bb = (bb > 127) ? 255 : 0;
+  return depalette(rr, gg, bb);
+}
 
 // Function to draw a BMP image on the e-paper display
 bool drawBmp(const char *filename) {
@@ -414,9 +483,9 @@ bool drawBmp(const char *filename) {
       int errorG;
       int errorB;
 
-      indexColor = depalette(r, g, b); // Get the index of the color in the colorPallete
-
-      if (useDithering) {
+      // Apply the selected dithering mode
+      if (ditherMode == DITHER_FLOYD) {
+        indexColor = depalette(r, g, b);
         errorR = r - colorPallete[indexColor*3+0];
         errorG = g - colorPallete[indexColor*3+1];
         errorB = b - colorPallete[indexColor*3+2];
@@ -443,6 +512,14 @@ bool drawBmp(const char *filename) {
             bnptr[2] = constrain(bnptr[2] + (1*errorB/16), 0, 255);
           }
         }
+      } else if (ditherMode == DITHER_ORDERED) {
+        indexColor = ditherThreshold(r, g, b, col, row, bayer4);
+      } else if (ditherMode == DITHER_HALFTONE) {
+        indexColor = ditherThreshold(r, g, b, col, row, halftone4);
+      } else if (ditherMode == DITHER_POPART) {
+        indexColor = ditherPopArt(r, g, b);
+      } else {
+        indexColor = depalette(r, g, b);
       }
 
       // Set the color based on the indexColor (Spectra 6)
@@ -589,7 +666,16 @@ void pngDrawCallback(pngle_t *pngle, uint32_t x, uint32_t y, uint32_t w, uint32_
   }
 
   if (dispCol >= 0 && dispCol < (int)EPD_WIDTH && dispRow >= 0 && dispRow < (int)EPD_HEIGHT) {
-    pngLineColor[dispCol] = depalette(rgba[0], rgba[1], rgba[2]);
+    int idx;
+    if (ditherMode == DITHER_ORDERED)
+      idx = ditherThreshold(rgba[0], rgba[1], rgba[2], dispCol, dispRow, bayer4);
+    else if (ditherMode == DITHER_HALFTONE)
+      idx = ditherThreshold(rgba[0], rgba[1], rgba[2], dispCol, dispRow, halftone4);
+    else if (ditherMode == DITHER_POPART)
+      idx = ditherPopArt(rgba[0], rgba[1], rgba[2]);
+    else
+      idx = depalette(rgba[0], rgba[1], rgba[2]);
+    pngLineColor[dispCol] = idx;
   }
 }
 
@@ -637,6 +723,14 @@ bool drawPng(const char *filename) {
   pngOffsetY = ((int)EPD_HEIGHT - pngImgH) / 2;
 
   memset(pngLineColor, 1, sizeof(pngLineColor));
+
+  // PNG delivers pixels top-down, but PSR 0x57 (UD bit flipped for
+  // upside-down mount) expects bottom-up data like BMP.  Override
+  // the Panel Setting Register to 0x5F (UD=1, normal scan) so the
+  // top-down PNG stream maps correctly to the physical display.
+  epd.SendCommand(0x00);   // PSR
+  epd.SendData(0x5F);
+  epd.SendData(0x69);
 
   epd.SendCommand(0x10); // start data frame
 
@@ -688,14 +782,16 @@ bool drawPng(const char *filename) {
 //  Image dispatcher — picks decoder & dithering by extension
 // ============================================================
 void drawImage(const String &filepath) {
+  // Determine dither mode from the 3rd filename segment (DD_MM_X_…)
+  ditherMode = parseDitherMode(filepath);
+  Serial.println("Dither mode: " + String((int)ditherMode));
+
   String lower = filepath;
   lower.toLowerCase();
 
   if (lower.endsWith(".png")) {
-    useDithering = false;  // PNG → dithering OFF
     drawPng(filepath.c_str());
   } else {
-    useDithering = false;  // BMP → dithering OFF
     drawBmp(filepath.c_str());
   }
 }
