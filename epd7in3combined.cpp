@@ -55,7 +55,10 @@ int Epd::Init(void) {
     Reset();
     DelayMs(20);
     EPD_7IN3F_BusyHigh();
-    
+
+#if defined(DISPLAY_TYPE_E)
+    // ---- Spectra 6 (7IN3E) init sequence ----
+
     SendCommand(0xAA);    // CMDH
     SendData(0x49);
     SendData(0x55);
@@ -64,7 +67,71 @@ int Epd::Init(void) {
     SendData(0x09);
     SendData(0x18);
 
-    SendCommand(0x01);
+    SendCommand(0x01);    // PWRR
+    SendData(0x3F);
+
+    SendCommand(0x00);    // PSR
+    SendData(0x57); // 0x5F = normal, 0x4F = flip UD only (display mounted upside-down)
+    SendData(0x69);
+
+    SendCommand(0x03);    // POFS
+    SendData(0x00);
+    SendData(0x54);
+    SendData(0x00);
+    SendData(0x44);
+
+    SendCommand(0x05);    // BTST1
+    SendData(0x40);
+    SendData(0x1F);
+    SendData(0x1F);
+    SendData(0x2C);
+
+    SendCommand(0x06);    // BTST2
+    SendData(0x6F);
+    SendData(0x1F);
+    SendData(0x17);
+    SendData(0x49);
+
+    SendCommand(0x08);    // BTST3
+    SendData(0x6F);
+    SendData(0x1F);
+    SendData(0x1F);
+    SendData(0x22);
+
+    SendCommand(0x30);    // PLL
+    SendData(0x08);
+
+    SendCommand(0x50);    // CDI
+    SendData(0x3F);
+
+    SendCommand(0x60);    // TCON
+    SendData(0x02);
+    SendData(0x00);
+
+    SendCommand(0x61);    // TRES
+    SendData(0x03);
+    SendData(0x20);
+    SendData(0x01);
+    SendData(0xE0);
+
+    SendCommand(0x82);    // T_VDCS
+    SendData(0x01);
+
+    SendCommand(0xE3);    // PWS
+    SendData(0x2F);
+
+#elif defined(DISPLAY_TYPE_F)
+    // ---- 7-color (7IN3F) init sequence ----
+
+    SendCommand(0xAA);    // CMDH
+    SendData(0x49);
+    SendData(0x55);
+    SendData(0x20);
+    SendData(0x08);
+    SendData(0x09);
+    SendData(0x18);
+
+    SendCommand(0x01);    // PWRR
     SendData(0x3F);
     SendData(0x00);
     SendData(0x32);
@@ -72,29 +139,29 @@ int Epd::Init(void) {
     SendData(0x0E);
     SendData(0x2A);
 
-    SendCommand(0x00);
+    SendCommand(0x00);    // PSR
     SendData(0x5F);
     SendData(0x69);
 
-    SendCommand(0x03);
+    SendCommand(0x03);    // POFS
     SendData(0x00);
     SendData(0x54);
     SendData(0x00);
-    SendData(0x44); 
+    SendData(0x44);
 
-    SendCommand(0x05);
+    SendCommand(0x05);    // BTST1
     SendData(0x40);
     SendData(0x1F);
     SendData(0x1F);
     SendData(0x2C);
 
-    SendCommand(0x06);
+    SendCommand(0x06);    // BTST2
     SendData(0x6F);
     SendData(0x1F);
-    SendData(0x1F); // original 0x16
-    SendData(0x22); // original 0x25
+    SendData(0x16);
+    SendData(0x25);
 
-    SendCommand(0x08);
+    SendCommand(0x08);    // BTST3
     SendData(0x6F);
     SendData(0x1F);
     SendData(0x1F);
@@ -104,27 +171,27 @@ int Epd::Init(void) {
     SendData(0x00);
     SendData(0x04);
 
-    SendCommand(0x30);
-    SendData(0x3C); // original 0x02
+    SendCommand(0x30);    // PLL
+    SendData(0x02);
 
-    SendCommand(0x41);     // TSE
+    SendCommand(0x41);    // TSE
     SendData(0x00);
 
-    SendCommand(0x50);
+    SendCommand(0x50);    // CDI
     SendData(0x3F);
 
-    SendCommand(0x60);
+    SendCommand(0x60);    // TCON
     SendData(0x02);
     SendData(0x00);
 
-    SendCommand(0x61);
+    SendCommand(0x61);    // TRES
     SendData(0x03);
     SendData(0x20);
-    SendData(0x01); 
+    SendData(0x01);
     SendData(0xE0);
 
-    SendCommand(0x82);
-    SendData(0x1E); 
+    SendCommand(0x82);    // T_VDCS
+    SendData(0x1E);
 
     SendCommand(0x84);
     SendData(0x00);
@@ -132,14 +199,16 @@ int Epd::Init(void) {
     SendCommand(0x86);    // AGID
     SendData(0x00);
 
-    SendCommand(0xE3);
+    SendCommand(0xE3);    // PWS
     SendData(0x2F);
 
-    SendCommand(0xE0);   // CCSET
-    SendData(0x00); 
-
-    SendCommand(0xE6);   // TSSET
+    SendCommand(0xE0);    // CCSET
     SendData(0x00);
+
+    SendCommand(0xE6);    // TSSET
+    SendData(0x00);
+
+#endif
 
     return 0;
 }
@@ -174,24 +243,24 @@ void Epd::EPD_7IN3F_BusyHigh(void)// If BUSYN=0 then waiting
  */
 void Epd::Reset(void) {
     DigitalWrite(reset_pin, HIGH);
-    DelayMs(20);   
-    DigitalWrite(reset_pin, LOW);                //module reset    
+    DelayMs(20);
+    DigitalWrite(reset_pin, LOW);                //module reset
     DelayMs(2);
     DigitalWrite(reset_pin, HIGH);
-    DelayMs(20);    
+    DelayMs(20);
 }
 
 void Epd::TurnOnDisplay(void) {
     SendCommand(0x04);  // POWER_ON
     DelayMs(20);
     EPD_7IN3F_BusyHigh();
-    
+
     SendCommand(0x12);  // DISPLAY_REFRESH
     SendData(0x00); // 0x01 acc. to datasheet, does grayscale?
     DelayMs(100);
     EPD_7IN3F_BusyHigh();
     //DelayMs(30000); // IMPROPER, waiting for busy turns off the screen too late
-    
+
     SendCommand(0x02);  // POWER_OFF
     SendData(0x00);
     EPD_7IN3F_BusyHigh();
@@ -203,14 +272,14 @@ parameter:
 ******************************************************************************/
 void Epd::EPD_7IN3F_Display(const UBYTE *image) {
     unsigned long i,j;
-    
+
     SendCommand(0x10);
     for(i=0; i<height; i++) {
         for(j=0; j<width/2; j++) {
             SendData(image[j + width*i]);
 		}
     }
-    
+
     TurnOnDisplay();
 }
 
@@ -218,7 +287,7 @@ void Epd::EPD_7IN3F_Display(const UBYTE *image) {
 function :  Sends the part image buffer in RAM to e-Paper and displays
 parameter:
 ******************************************************************************/
-void Epd::EPD_7IN3F_Display_part(const UBYTE *image, UWORD xstart, UWORD ystart, 
+void Epd::EPD_7IN3F_Display_part(const UBYTE *image, UWORD xstart, UWORD ystart,
                                         UWORD image_width, UWORD image_heigh)
 {
     unsigned long i,j;
@@ -245,7 +314,7 @@ parameter:
 // void Epd::EPD_7IN3F_Show7Block(void)
 // {
 //     unsigned long i, j, k;
-//     unsigned char const Color_seven[8] = 
+//     unsigned char const Color_seven[8] =
 //     {EPD_7IN3F_BLACK, EPD_7IN3F_BLUE, EPD_7IN3F_GREEN, EPD_7IN3F_ORANGE,
 //     EPD_7IN3F_RED, EPD_7IN3F_YELLOW, EPD_7IN3F_WHITE, 0x7};
 
@@ -257,7 +326,7 @@ parameter:
 //             }
 //         }
 //     }
-    
+
 //     for(i=0; i<240; i++) {
 //         for(k = 4 ; k < 8; k ++) {
 //             for(j = 0 ; j < 100; j ++) {
@@ -283,7 +352,7 @@ void Epd::EPD_7IN3F_Draw_Blank(UWORD rows, UWORD cols, UBYTE color)
 }
 
 /******************************************************************************
-function : 
+function :
       Clear screen
 ******************************************************************************/
 void Epd::Clear(UBYTE color) {
@@ -293,14 +362,14 @@ void Epd::Clear(UBYTE color) {
             SendData((color<<4)|color);
 		}
 	}
-    
+
     TurnOnDisplay();
 }
 
 /**
- *  @brief: After this command is transmitted, the chip would enter the 
- *          deep-sleep mode to save power. 
- *          The deep sleep mode would return to standby by hardware reset. 
+ *  @brief: After this command is transmitted, the chip would enter the
+ *          deep-sleep mode to save power.
+ *          The deep sleep mode would return to standby by hardware reset.
  *          The only one parameter is a check code, the command would be
  *          You can use EPD_Reset() to awaken
  */

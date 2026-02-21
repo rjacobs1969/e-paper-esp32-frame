@@ -97,7 +97,7 @@ void initializeTime() {
         return;
       }
     }
-    
+
     timeWorking = true;
     Serial.println("Time successfully obtained");
     Serial.println(&timeinfo, "Current time: %A, %B %d %Y %H:%M:%S");
@@ -105,6 +105,13 @@ void initializeTime() {
 
 long getSecondsTillNextImage(long delta, long deltaSinceTimeObtain){
 
+    // Always sleep for 10 minutes (600 seconds) between image updates.
+    // This makes the device wake every 10 minutes and display the next file.
+    const long intervalSeconds = 10 * 60; // 10 minutes
+    Serial.println("Next image in seconds: " + String(intervalSeconds));
+    return intervalSeconds;
+
+    /*
     if(!timeWorking){
       unsigned int totalRuntime = millis() - delta;
       unsigned int totalRuntimeSeconds = totalRuntime / 1000;
@@ -138,4 +145,5 @@ long getSecondsTillNextImage(long delta, long deltaSinceTimeObtain){
     Serial.println("Time difference: " + String(timeDiff) + " seconds");
     Serial.println("Time difference in microseconds: " + String(timeDiff * 1e6));
     return timeDiff;
+    */
 }

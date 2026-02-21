@@ -12,6 +12,13 @@
 //This is the pin for the transistor that powers the external components
 #define TRANSISTOR_PIN 26
 
+// Compile-time debug mode: when set to 1 the sketch will NOT run
+// the normal behaviour. Instead it will set `TRANSISTOR_PIN` as an
+// output and toggle it every 5 seconds to help debug the circuit.
+#ifndef DEBUG_TOGGLE_TRANSISTOR
+#define DEBUG_TOGGLE_TRANSISTOR 0
+#endif
+
 Preferences preferences;
 
 Epd epd;
@@ -99,7 +106,14 @@ void setup() {
   setCpuFrequencyMhz(80); // or 40, 20, etc. (default is 240)
   Serial.begin(115200);
   delta = millis();
-  
+
+#if DEBUG_TOGGLE_TRANSISTOR
+  // Debug-only startup: initialise the transistor pin and stop.
+  pinMode(TRANSISTOR_PIN, OUTPUT);
+  digitalWrite(TRANSISTOR_PIN, LOW);
+  Serial.println("DEBUG_TOGGLE_TRANSISTOR enabled: toggling pin every 5s");
+  return;
+#endif
   preferences.begin("e-paper", false);
 
   esp_sleep_wakeup_cause_t wakeup_reason;
@@ -115,7 +129,7 @@ void setup() {
   gpio_hold_dis((gpio_num_t)TRANSISTOR_PIN);
   // Turn on the transistor to power the external components
   pinMode(TRANSISTOR_PIN, OUTPUT);
-  digitalWrite(TRANSISTOR_PIN, LOW); 
+  digitalWrite(TRANSISTOR_PIN, LOW);
   delay(100);
 
   // Initialize the SD card
@@ -150,7 +164,19 @@ void setup() {
 }
 
 void loop() {
-    hibernate();
+#if DEBUG_TOGGLE_TRANSISTOR
+  static unsigned long lastToggle = 0;
+  static bool state = false;
+  unsigned long now = millis();
+  if (now - lastToggle >= 5000) { // 5 seconds
+    state = !state;
+    digitalWrite(TRANSISTOR_PIN, state ? HIGH : LOW);
+    Serial.println(state ? "TRANSISTOR_PIN HIGH" : "TRANSISTOR_PIN LOW");
+    lastToggle = now;
+  }
+#else
+  hibernate();
+#endif
 }
 
 void hibernateShort() {
@@ -179,7 +205,7 @@ void hibernate() {
 
 // Function to check if the SD files have changed and update the preferences if needed
 void checkSDFiles(){
-  
+
   Serial.println("Checking info.txt File");
   File infoFile = SD.open("/info.txt");  // Try to open info.txt
 
@@ -200,13 +226,13 @@ void checkSDFiles(){
   if(preferences.getString("checker", "") != infoText){
     Serial.println("Check SD File");
     File root = SD.open("/");
-    u_int16_t fileCount = 0;  
+    u_int16_t fileCount = 0;
     String fileString = "";
     std::vector<String> bmpFiles;
 
     // Get every filename in the root directory and save the ones with '.bmp' extension in the bmpFiles vector
     while (true) {
-      File entry =  root.openNextFile(); 
+      File entry =  root.openNextFile();
 
       if (!entry) {
         Serial.println("No more files");
@@ -214,15 +240,15 @@ void checkSDFiles(){
         root.close();
         break;
       }
-  
+
       uint8_t nameSize = String(entry.name()).length();  // get file name size
       String str1 = String(entry.name()).substring( nameSize - 4 );  // save the last 4 characters (file extension)
-  
+
       if ( str1.equalsIgnoreCase(".bmp") ) {  // if the file has '.bmp' extension
         bmpFiles.push_back(entry.name());
         Serial.println(String(entry.name()));  // print the file name
       }
-  
+
       entry.close();  // close the file
     }
     std::sort(bmpFiles.begin(), bmpFiles.end());
@@ -330,12 +356,12 @@ String getNextFile(){
   if (nextFile != "") {
     return "/" + nextFile;
   }
-  
+
   // If no file was found for the date, get the next file in the list based on the imageIndex
   unsigned int fileCount = preferences.getUInt("fileCount", 0);
   unsigned int imageIndex = preferences.getUInt("imageIndex", 0);
 
-  unsigned int temp = imageIndex; 
+  unsigned int temp = imageIndex;
   if(imageIndex >= fileCount - 1){
     imageIndex = 0;
   }else{
@@ -354,6 +380,10 @@ String getNextFile(){
 
   return "/" + nextFile;
 }
+
+// Whether to apply Floyd-Steinberg dithering when rendering images.
+// Will be set dynamically per file later; for now defaults to off.
+bool useDithering = false;
 
 // Function to draw a BMP image on the e-paper display
 bool drawBmp(const char *filename) {
@@ -413,34 +443,31 @@ bool drawBmp(const char *filename) {
   epd.SendCommand(0x10); // start data frame
 
   epd.EPD_7IN3F_Draw_Blank(y, width(), EPD_WHITE); // fill area on top of pic white
-  
+
   // row is decremented as the BMP image is drawn bottom up
   bmpFS.read(lineBuffer, sizeof(lineBuffer));
-  //reverse linBuffer with the alorithm library 
-  std::reverse(lineBuffer, lineBuffer + sizeof(lineBuffer));
 
   float batteryVolts = readBattery();
   Serial.println("Battery voltage: " + String(batteryVolts) + "V");
 
   for (row = h-1; row >= 0; row--) {
     epd.EPD_7IN3F_Draw_Blank(1, x, EPD_WHITE); // fill area on the left of pic white
-    
+
     if(row != 0){
       bmpFS.read(nextLineBuffer, sizeof(nextLineBuffer));
-      std::reverse(nextLineBuffer, nextLineBuffer + sizeof(nextLineBuffer));
     }
     uint8_t*  bptr = lineBuffer;
     uint8_t*  bnptr = nextLineBuffer;
-    
+
     uint8_t output = 0;
 
     for (uint16_t col = 0; col < w; col++)
     {
-      // Get r g b values for the next pixel
+      // Get r g b values for the next pixel (BMP stores as B,G,R)
       if (bitDepth == 24) {
-        r = *bptr++;
-        g = *bptr++;
         b = *bptr++;
+        g = *bptr++;
+        r = *bptr++;
         bnptr += 3;
       } else {
         uint32_t c = 0;
@@ -464,32 +491,35 @@ bool drawBmp(const char *filename) {
       int errorR;
       int errorG;
       int errorB;
-    
-      indexColor = depalette(r, g, b); // Get the index of the color in the colorPallete
-      errorR = r - colorPallete[indexColor*3+0];
-      errorG = g - colorPallete[indexColor*3+1];
-      errorB = b - colorPallete[indexColor*3+2];
-      
-      if(col < w-1){
-        bptr[0] = constrain(bptr[0] + (7*errorR/16), 0, 255);
-        bptr[1] = constrain(bptr[1] + (7*errorG/16), 0, 255);
-        bptr[2] = constrain(bptr[2] + (7*errorB/16), 0, 255);
-      }
 
-      if(row > 0){
-        if(col > 0){
-          bnptr[-4] = constrain(bnptr[-4] + (3*errorR/16), 0, 255);
-          bnptr[-5] = constrain(bnptr[-5] + (3*errorG/16), 0, 255);
-          bnptr[-6] = constrain(bnptr[-6] + (3*errorB/16), 0, 255);
-        }
-        bnptr[-1] = constrain(bnptr[-1] + (5*errorR/16), 0, 255);
-        bnptr[-2] = constrain(bnptr[-2] + (5*errorG/16), 0, 255);
-        bnptr[-3] = constrain(bnptr[-3] + (5*errorB/16), 0, 255);
+      indexColor = depalette(r, g, b); // Get the index of the color in the colorPallete
+
+      if (useDithering) {
+        errorR = r - colorPallete[indexColor*3+0];
+        errorG = g - colorPallete[indexColor*3+1];
+        errorB = b - colorPallete[indexColor*3+2];
 
         if(col < w-1){
-          bnptr[0] = constrain(bnptr[0] + (1*errorR/16), 0, 255);
-          bnptr[1] = constrain(bnptr[1] + (1*errorG/16), 0, 255);
-          bnptr[2] = constrain(bnptr[2] + (1*errorB/16), 0, 255);
+          bptr[0] = constrain(bptr[0] + (7*errorR/16), 0, 255);
+          bptr[1] = constrain(bptr[1] + (7*errorG/16), 0, 255);
+          bptr[2] = constrain(bptr[2] + (7*errorB/16), 0, 255);
+        }
+
+        if(row > 0){
+          if(col > 0){
+            bnptr[-4] = constrain(bnptr[-4] + (3*errorR/16), 0, 255);
+            bnptr[-5] = constrain(bnptr[-5] + (3*errorG/16), 0, 255);
+            bnptr[-6] = constrain(bnptr[-6] + (3*errorB/16), 0, 255);
+          }
+          bnptr[-1] = constrain(bnptr[-1] + (5*errorR/16), 0, 255);
+          bnptr[-2] = constrain(bnptr[-2] + (5*errorG/16), 0, 255);
+          bnptr[-3] = constrain(bnptr[-3] + (5*errorB/16), 0, 255);
+
+          if(col < w-1){
+            bnptr[0] = constrain(bnptr[0] + (1*errorR/16), 0, 255);
+            bnptr[1] = constrain(bnptr[1] + (1*errorG/16), 0, 255);
+            bnptr[2] = constrain(bnptr[2] + (1*errorB/16), 0, 255);
+          }
         }
       }
 
