@@ -56,7 +56,6 @@ int Epd::Init(void) {
     DelayMs(20);
     EPD_7IN3F_BusyHigh();
 
-#if defined(DISPLAY_TYPE_E)
     // ---- Spectra 6 (7IN3E) init sequence ----
 
     SendCommand(0xAA);    // CMDH
@@ -71,7 +70,7 @@ int Epd::Init(void) {
     SendData(0x3F);
 
     SendCommand(0x00);    // PSR
-    SendData(0x57); // 0x5F = normal, 0x4F = flip UD only (display mounted upside-down)
+    SendData(0x57); // 0x5F = normal, 0x57 = flip for upside-down mount
     SendData(0x69);
 
     SendCommand(0x03);    // POFS
@@ -119,96 +118,6 @@ int Epd::Init(void) {
 
     SendCommand(0xE3);    // PWS
     SendData(0x2F);
-
-#elif defined(DISPLAY_TYPE_F)
-    // ---- 7-color (7IN3F) init sequence ----
-
-    SendCommand(0xAA);    // CMDH
-    SendData(0x49);
-    SendData(0x55);
-    SendData(0x20);
-    SendData(0x08);
-    SendData(0x09);
-    SendData(0x18);
-
-    SendCommand(0x01);    // PWRR
-    SendData(0x3F);
-    SendData(0x00);
-    SendData(0x32);
-    SendData(0x2A);
-    SendData(0x0E);
-    SendData(0x2A);
-
-    SendCommand(0x00);    // PSR
-    SendData(0x5F);
-    SendData(0x69);
-
-    SendCommand(0x03);    // POFS
-    SendData(0x00);
-    SendData(0x54);
-    SendData(0x00);
-    SendData(0x44);
-
-    SendCommand(0x05);    // BTST1
-    SendData(0x40);
-    SendData(0x1F);
-    SendData(0x1F);
-    SendData(0x2C);
-
-    SendCommand(0x06);    // BTST2
-    SendData(0x6F);
-    SendData(0x1F);
-    SendData(0x16);
-    SendData(0x25);
-
-    SendCommand(0x08);    // BTST3
-    SendData(0x6F);
-    SendData(0x1F);
-    SendData(0x1F);
-    SendData(0x22);
-
-    SendCommand(0x13);    // IPC
-    SendData(0x00);
-    SendData(0x04);
-
-    SendCommand(0x30);    // PLL
-    SendData(0x02);
-
-    SendCommand(0x41);    // TSE
-    SendData(0x00);
-
-    SendCommand(0x50);    // CDI
-    SendData(0x3F);
-
-    SendCommand(0x60);    // TCON
-    SendData(0x02);
-    SendData(0x00);
-
-    SendCommand(0x61);    // TRES
-    SendData(0x03);
-    SendData(0x20);
-    SendData(0x01);
-    SendData(0xE0);
-
-    SendCommand(0x82);    // T_VDCS
-    SendData(0x1E);
-
-    SendCommand(0x84);
-    SendData(0x00);
-
-    SendCommand(0x86);    // AGID
-    SendData(0x00);
-
-    SendCommand(0xE3);    // PWS
-    SendData(0x2F);
-
-    SendCommand(0xE0);    // CCSET
-    SendData(0x00);
-
-    SendCommand(0xE6);    // TSSET
-    SendData(0x00);
-
-#endif
 
     return 0;
 }

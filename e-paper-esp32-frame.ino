@@ -8,6 +8,7 @@
 #include "time_utils.h"
 #include "esp_adc_cal.h"
 #include "driver/adc.h"
+#include <pngle.h>
 
 //This is the pin for the transistor that powers the external components
 #define TRANSISTOR_PIN 26
@@ -33,28 +34,15 @@ uint16_t height() { return EPD_HEIGHT; }
 SPIClass vspi(VSPI); // VSPI for SD card
 
 
-#if defined(DISPLAY_TYPE_E)
-  // Color pallete for dithering. These are specific to the 7in3e waveshare display.
-  uint8_t colorPallete[6*3] = {
-    0, 0, 0,
-    255, 255, 255,
-    255, 255, 0,
-    255, 0, 0,
-    0, 0, 255,
-    0, 255, 0
-  };
-#elif defined(DISPLAY_TYPE_F)
-  // Color pallete for dithering. These are specific to the 7in3f waveshare display.
-  uint8_t colorPallete[7*3] = {
-    0, 0, 0,
-    255, 255, 255,
-    67, 138, 28,
-    100, 64, 255,
-    191, 0, 0,
-    255, 243, 56,
-    232, 126, 0,
-  };
-#endif
+// Color palette for dithering — Spectra 6 (7IN3E) display
+uint8_t colorPallete[6*3] = {
+  0, 0, 0,        // BLACK
+  255, 255, 255,   // WHITE
+  255, 255, 0,     // YELLOW
+  255, 0, 0,       // RED
+  0, 0, 255,       // BLUE
+  0, 255, 0        // GREEN
+};
 
 uint16_t read16(fs::File &f) {
   uint16_t result;
@@ -103,7 +91,7 @@ float readBattery() {
 }
 
 void setup() {
-  setCpuFrequencyMhz(80); // or 40, 20, etc. (default is 240)
+  setCpuFrequencyMhz(240); // full speed for image decoding
   Serial.begin(115200);
   delta = millis();
 
@@ -152,11 +140,10 @@ void setup() {
     Serial.println("eP init no F");
   }
 
-  checkSDFiles(); //Check if the SD files have changed and update the preferences if needed
-
   String file = getNextFile(); // Get the next file to display
 
-  drawBmp(file.c_str()); // Display the file
+  delay(10); // Feed the watchdog — setup() may have been running close to the 5 s WDT limit
+  drawImage(file); // Display the file
 
   digitalWrite(TRANSISTOR_PIN, HIGH); // Turn off external components
 
@@ -203,182 +190,117 @@ void hibernate() {
     // esp_deep_sleep(60* 1e6); // RJDEBIG
 }
 
-// Function to check if the SD files have changed and update the preferences if needed
-void checkSDFiles(){
-
-  Serial.println("Checking info.txt File");
-  File infoFile = SD.open("/info.txt");  // Try to open info.txt
-
-  if (!infoFile) {
-    Serial.println("info.txt not found");
-    return;  // Exit if file not found
-  }
-
-  String infoText = "";
-  while (infoFile.available()) {
-    infoText += (char)infoFile.read();  // Read file content into a String
-  }
-  infoFile.close();  // Close the file after reading
-
-  Serial.println("Content of info.txt: " + infoText);
-
-  // Check if the info.txt content has changed, if so update the preferences
-  if(preferences.getString("checker", "") != infoText){
-    Serial.println("Check SD File");
-    File root = SD.open("/");
-    u_int16_t fileCount = 0;
-    String fileString = "";
-    std::vector<String> bmpFiles;
-
-    // Get every filename in the root directory and save the ones with '.bmp' extension in the bmpFiles vector
-    while (true) {
-      File entry =  root.openNextFile();
-
-      if (!entry) {
-        Serial.println("No more files");
-        // no more files
-        root.close();
-        break;
-      }
-
-      uint8_t nameSize = String(entry.name()).length();  // get file name size
-      String str1 = String(entry.name()).substring( nameSize - 4 );  // save the last 4 characters (file extension)
-
-      if ( str1.equalsIgnoreCase(".bmp") ) {  // if the file has '.bmp' extension
-        bmpFiles.push_back(entry.name());
-        Serial.println(String(entry.name()));  // print the file name
-      }
-
-      entry.close();  // close the file
-    }
-    std::sort(bmpFiles.begin(), bmpFiles.end());
-
-    // Create a string with all the file names separated by commas
-    for (int i = 0; i < bmpFiles.size(); i++) {
-      fileString += bmpFiles[i] + ",";  // add file name to fileString
-    }
-
-    // Reset preferences values
-    preferences.putUInt("fileCount", bmpFiles.size());
-    preferences.putUInt("imageIndex", 0);
-    preferences.putString("checker", infoText);
-
-    // Save the fileString to a txt file to parse the files later
-    File file = SD.open("/fileString.txt", FILE_WRITE);
-    if(!file){
-      Serial.println("Failed to open file for writing");
-      return;
-    }
-    file.print(fileString);
-    file.close();
-  }
+// Returns true if the filename ends with .bmp or .png (case-insensitive)
+bool isImageFile(const String &name) {
+  String lower = name;
+  lower.toLowerCase();
+  return lower.endsWith(".bmp") || lower.endsWith(".png");
 }
 
-// Function to get the next file to display
+// Function to get the next file to display.
+// 1) Looks in /images_date/ for files whose name starts with DD_MM matching today's date.
+// 2) If nothing matches, picks the next image sequentially from /images/.
+// Supported extensions: .bmp .png
 String getNextFile(){
-  // Read fileString from txt file
-  File file = SD.open("/fileString.txt");
-  if(!file){
-    Serial.println("Failed to open file for reading");
+
+  // ---- Build the date prefix (DD_MM) ----
+  String datePrefix;
+
+  if(timeWorking){
+    int day   = timeinfo.tm_mday;
+    int month = timeinfo.tm_mon + 1;
+
+    // Before 9 AM use the previous day's date
+    if (timeinfo.tm_hour < 9) {
+      time_t previousDay = mktime(&timeinfo) - 24 * 60 * 60;
+      struct tm* prev = localtime(&previousDay);
+      day   = prev->tm_mday;
+      month = prev->tm_mon + 1;
+    }
+
+    char buf[6];
+    snprintf(buf, sizeof(buf), "%02d_%02d", day, month);
+    datePrefix = String(buf);
+  } else {
+    // Fallback: use the stored date (DD.MM) converted to DD_MM
+    String stored = preferences.getString("date", "01.01");
+    datePrefix = stored.substring(0, 2) + "_" + stored.substring(3, 5);
+  }
+
+  Serial.println("Date prefix: " + datePrefix);
+
+  // ---- 1) Search /images_date/ for a file starting with DD_MM ----
+  File dateDir = SD.open("/images_date");
+  if (dateDir && dateDir.isDirectory()) {
+    while (true) {
+      File entry = dateDir.openNextFile();
+      if (!entry) break;
+
+      String name = String(entry.name());
+      entry.close();
+
+      if (!isImageFile(name)) continue;
+
+      // Check if the filename starts with the date prefix
+      if (name.startsWith(datePrefix)) {
+        dateDir.close();
+        String path = "/images_date/" + name;
+        Serial.println("Date-matched file: " + path);
+        return path;
+      }
+    }
+    dateDir.close();
+  }
+
+  Serial.println("No date-matched file found, falling back to /images/");
+
+  // ---- 2) Fallback: cycle through /images/ sequentially ----
+  File imgDir = SD.open("/images");
+  if (!imgDir || !imgDir.isDirectory()) {
+    Serial.println("/images/ folder not found");
     return "";
   }
-  String fileString = "";
-  while(file.available()){
-    fileString += (char)file.read();
-  }
-  file.close();
 
-  String date;
-
-  // If time is working, get the date from the timeinfo struct to display a image set for that day
-  if(timeWorking){
-
-    Serial.println("timeinfo.tm_hour: " + String(timeinfo.tm_hour));
-    Serial.println("timeinfo.tm_min: " + String(timeinfo.tm_min));
-    if (timeinfo.tm_hour < 9) {
-      Serial.println("Getting the date of the previous day");
-      // Get the date of the previous day
-      time_t previousDay = mktime(&timeinfo) - 24 * 60 * 60;
-      struct tm* previousDayInfo = localtime(&previousDay);
-      date = String(previousDayInfo->tm_mday < 10 ? "0" : "") + String(previousDayInfo->tm_mday) + "." + String((previousDayInfo->tm_mon + 1) < 10 ? "0" : "") + String(previousDayInfo->tm_mon + 1);
-    } else {
-      date = String(timeinfo.tm_mday < 10 ? "0" : "") + String(timeinfo.tm_mday) + "." + String((timeinfo.tm_mon + 1) < 10 ? "0" : "") + String(timeinfo.tm_mon + 1);
-    }
-  // If time is not working, get the date from the preferences to display the next image in the list. The date is updated every time the device obtains the time.
-  }else{
-    date = preferences.getString("date", "01.01");
-    int day = date.substring(0, 2).toInt();
-    int month = date.substring(3, 5).toInt();
-
-    //Added for leap year (Years don't matter for this project, years are not checked)
-    int year = 2000;
-    struct tm timeinfoTemp = {0};
-    timeinfoTemp.tm_year = year - 1900;
-    timeinfoTemp.tm_mon = month - 1; // tm_mon is 0-based
-    timeinfoTemp.tm_mday = day;
-
-    // Add one day
-    timeinfoTemp.tm_mday += 1;
-
-    // Normalize the time structure (this will handle month/year overflow)
-    mktime(&timeinfoTemp);
-
-    // Format the new date back to a string
-    char newDate[6];
-    snprintf(newDate, sizeof(newDate), "%02d.%02d", timeinfoTemp.tm_mday, timeinfoTemp.tm_mon + 1);
-
-    // Save the new date
-    date = String(newDate);
-    Serial.println("New date: " + date);
-  }
-  Serial.println("date: " + date);
-  preferences.putString("date", date);
-  int start = 0;
-  int end = fileString.indexOf(",", start);
-  String nextFile = "";
-
-  // Get the next file from the fileString based on the date
+  // Collect all valid image filenames and sort them
+  std::vector<String> imageFiles;
   while (true) {
-    String currentFile = fileString.substring(start, end);
-    Serial.println("currentFile: " + currentFile);
-    Serial.println("currentFile.indexOf(date): " + currentFile.indexOf(date));
-    if (currentFile.indexOf(date) != -1) {
-      nextFile = currentFile;
-      break;
-    }
-    start = end + 1;
-    end = fileString.indexOf(",", start);
-    if (end == -1) {
-      break;
+    File entry = imgDir.openNextFile();
+    if (!entry) break;
+
+    String name = String(entry.name());
+    entry.close();
+
+    if (isImageFile(name)) {
+      imageFiles.push_back(name);
     }
   }
+  imgDir.close();
 
-  if (nextFile != "") {
-    return "/" + nextFile;
+  if (imageFiles.empty()) {
+    Serial.println("No image files in /images/");
+    return "";
   }
 
-  // If no file was found for the date, get the next file in the list based on the imageIndex
-  unsigned int fileCount = preferences.getUInt("fileCount", 0);
+  std::sort(imageFiles.begin(), imageFiles.end());
+
+  // Get the stored index and advance it
   unsigned int imageIndex = preferences.getUInt("imageIndex", 0);
-
-  unsigned int temp = imageIndex;
-  if(imageIndex >= fileCount - 1){
+  if (imageIndex >= imageFiles.size()) {
     imageIndex = 0;
-  }else{
-    imageIndex++;
+  }
+
+  String chosen = imageFiles[imageIndex];
+
+  // Advance for next wake-up
+  imageIndex++;
+  if (imageIndex >= imageFiles.size()) {
+    imageIndex = 0;
   }
   preferences.putUInt("imageIndex", imageIndex);
 
-  start = 0;
-  end = fileString.indexOf(",", start);
-  for(int i = 0; i < temp; i++){
-    start = end + 1;
-    end = fileString.indexOf(",", start);
-  }
-  nextFile = fileString.substring(start, end);
-  Serial.println("nextFile: " + nextFile);
-
-  return "/" + nextFile;
+  String path = "/images/" + chosen;
+  Serial.println("Sequential file: " + path);
+  return path;
 }
 
 // Whether to apply Floyd-Steinberg dithering when rendering images.
@@ -523,53 +445,14 @@ bool drawBmp(const char *filename) {
         }
       }
 
-      // Set the color based on the indexColor
+      // Set the color based on the indexColor (Spectra 6)
       switch (indexColor){
-        #if defined(DISPLAY_TYPE_E)
-          case 0:
-            color = EPD_7IN3E_BLACK;
-            break;
-          case 1:
-            color = EPD_7IN3E_WHITE;
-            break;
-          case 2:
-            color = EPD_7IN3E_YELLOW;
-            break;
-          case 3:
-            color = EPD_7IN3E_RED;
-            break;
-          case 4:
-            color = EPD_7IN3E_BLUE;
-            break;
-          case 5:
-            color = EPD_7IN3E_GREEN;
-            break;
-        #elif defined(DISPLAY_TYPE_F)
-          case 0:
-            color = EPD_7IN3F_BLACK;
-            break;
-          case 1:
-            color = EPD_7IN3F_WHITE;
-            break;
-          case 2:
-            color = EPD_7IN3F_GREEN;
-            break;
-          case 3:
-            color = EPD_7IN3F_BLUE;
-            break;
-          case 4:
-            color = EPD_7IN3F_RED;
-            break;
-          case 5:
-            color = EPD_7IN3F_YELLOW;
-            break;
-          case 6:
-            color = EPD_7IN3F_ORANGE;
-            break;
-          case 7:
-            color = EPD_7IN3F_WHITE;
-            break;
-        #endif
+        case 0: color = EPD_7IN3E_BLACK;  break;
+        case 1: color = EPD_7IN3E_WHITE;  break;
+        case 2: color = EPD_7IN3E_YELLOW; break;
+        case 3: color = EPD_7IN3E_RED;    break;
+        case 4: color = EPD_7IN3E_BLUE;   break;
+        case 5: color = EPD_7IN3E_GREEN;  break;
       }
 
       if (batteryVolts <= 3.3 && col <= 50 && row >= h-50){
@@ -638,4 +521,181 @@ int depalette( uint8_t r, uint8_t g, uint8_t b ){
 		}
 	}
 	return bestc;
+}
+
+// ============================================================
+//  Palette-index → display color (shared by all decoders)
+// ============================================================
+uint8_t indexToColor(int idx) {
+  switch (idx) {
+    case 0: return EPD_7IN3E_BLACK;
+    case 1: return EPD_7IN3E_WHITE;
+    case 2: return EPD_7IN3E_YELLOW;
+    case 3: return EPD_7IN3E_RED;
+    case 4: return EPD_7IN3E_BLUE;
+    case 5: return EPD_7IN3E_GREEN;
+    default: return EPD_7IN3E_WHITE;
+  }
+}
+
+// ============================================================
+//  PNG decoder  (uses pngle library — lightweight, line-based)
+// ============================================================
+
+static int pngOffsetX = 0;
+static int pngOffsetY = 0;
+static int pngImgW = 0, pngImgH = 0;
+static int pngCurRow = -1;
+static uint8_t pngLineColor[EPD_WIDTH];
+static float pngBatteryVolts = 0;
+static int pngLastRowFlushed = -1;
+
+void pngFlushRow(int dispRow) {
+  uint8_t output = 0;
+  for (int col = 0; col < (int)EPD_WIDTH; col++) {
+    uint8_t color = indexToColor(pngLineColor[col]);
+    if (pngBatteryVolts <= 3.3 && col <= 50 && dispRow >= (int)EPD_HEIGHT - 50) {
+      color = EPD_RED;
+    }
+    if (col & 0x01) {
+      output |= color;
+      epd.SendData(output);
+    } else {
+      output = color << 4;
+    }
+  }
+}
+
+void pngDrawCallback(pngle_t *pngle, uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                      const uint8_t rgba[4]) {
+  int dispRow = (int)y + pngOffsetY;
+  int dispCol = (int)x + pngOffsetX;
+
+  // New row? Flush the previous one
+  if ((int)y != pngCurRow) {
+    if (pngCurRow >= 0) {
+      int prevDispRow = pngCurRow + pngOffsetY;
+      // Fill any skipped blank rows
+      while (pngLastRowFlushed < prevDispRow - 1) {
+        pngLastRowFlushed++;
+        memset(pngLineColor, 1, sizeof(pngLineColor));
+        pngFlushRow(pngLastRowFlushed);
+      }
+      pngFlushRow(prevDispRow);
+      pngLastRowFlushed = prevDispRow;
+    }
+    pngCurRow = (int)y;
+    memset(pngLineColor, 1, sizeof(pngLineColor)); // reset to WHITE
+  }
+
+  if (dispCol >= 0 && dispCol < (int)EPD_WIDTH && dispRow >= 0 && dispRow < (int)EPD_HEIGHT) {
+    pngLineColor[dispCol] = depalette(rgba[0], rgba[1], rgba[2]);
+  }
+}
+
+bool drawPng(const char *filename) {
+  Serial.println("Drawing PNG file: " + String(filename));
+
+  fs::File pngFile = SD.open(filename);
+  if (!pngFile) {
+    Serial.println("PNG file not found");
+    return false;
+  }
+
+  pngle_t *pngle = pngle_new();
+  if (!pngle) {
+    Serial.println("pngle_new failed");
+    pngFile.close();
+    return false;
+  }
+
+  pngle_set_draw_callback(pngle, pngDrawCallback);
+
+  // We need to feed some data first to get dimensions
+  // Feed the whole file in chunks
+  pngCurRow = -1;
+  pngLastRowFlushed = -1;
+  pngBatteryVolts = readBattery();
+  Serial.println("Battery voltage: " + String(pngBatteryVolts) + "V");
+
+  // Read header to get dimensions — feed first chunk
+  uint8_t pngBuf[1024];
+  int fed = pngFile.read(pngBuf, sizeof(pngBuf));
+  if (fed > 0) {
+    int consumed = pngle_feed(pngle, pngBuf, fed);
+    if (consumed < 0) {
+      Serial.println("PNG feed error");
+      pngle_destroy(pngle);
+      pngFile.close();
+      return false;
+    }
+  }
+
+  pngImgW = pngle_get_width(pngle);
+  pngImgH = pngle_get_height(pngle);
+  pngOffsetX = ((int)EPD_WIDTH  - pngImgW) / 2;
+  pngOffsetY = ((int)EPD_HEIGHT - pngImgH) / 2;
+
+  memset(pngLineColor, 1, sizeof(pngLineColor));
+
+  epd.SendCommand(0x10); // start data frame
+
+  // Fill blank rows above image
+  for (int r = 0; r < pngOffsetY; r++) {
+    memset(pngLineColor, 1, sizeof(pngLineColor));
+    pngFlushRow(r);
+    pngLastRowFlushed = r;
+  }
+
+  // Continue feeding the rest of the file
+  while (pngFile.available()) {
+    int bytesRead = pngFile.read(pngBuf, sizeof(pngBuf));
+    if (bytesRead <= 0) break;
+    int consumed = pngle_feed(pngle, pngBuf, bytesRead);
+    if (consumed < 0) {
+      Serial.println("PNG decode error");
+      break;
+    }
+  }
+
+  // Flush the last image row
+  if (pngCurRow >= 0) {
+    int lastDispRow = pngCurRow + pngOffsetY;
+    while (pngLastRowFlushed < lastDispRow - 1) {
+      pngLastRowFlushed++;
+      memset(pngLineColor, 1, sizeof(pngLineColor));
+      pngFlushRow(pngLastRowFlushed);
+    }
+    pngFlushRow(lastDispRow);
+    pngLastRowFlushed = lastDispRow;
+  }
+
+  // Fill remaining rows below image
+  while (pngLastRowFlushed < (int)EPD_HEIGHT - 1) {
+    pngLastRowFlushed++;
+    memset(pngLineColor, 1, sizeof(pngLineColor));
+    pngFlushRow(pngLastRowFlushed);
+  }
+
+  pngle_destroy(pngle);
+  pngFile.close();
+  epd.TurnOnDisplay();
+  epd.Sleep();
+  return true;
+}
+
+// ============================================================
+//  Image dispatcher — picks decoder & dithering by extension
+// ============================================================
+void drawImage(const String &filepath) {
+  String lower = filepath;
+  lower.toLowerCase();
+
+  if (lower.endsWith(".png")) {
+    useDithering = false;  // PNG → dithering OFF
+    drawPng(filepath.c_str());
+  } else {
+    useDithering = false;  // BMP → dithering OFF
+    drawBmp(filepath.c_str());
+  }
 }

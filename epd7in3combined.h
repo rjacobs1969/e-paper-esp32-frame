@@ -1,36 +1,10 @@
 /*****************************************************************************
-* | File      	:   EPD_7in3f.h
-* | Author      :   Waveshare team
-* | Function    :   7.3inch e-paper F
-* | Info        :
-*----------------
-* |	This version:   V1.0
-* | Date        :   2022-10-21
-* | Info        :
-* -----------------------------------------------------------------------------
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documnetation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to  whom the Software is
-# furished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS OR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
-#
+* | File        :   epd7in3combined.h
+* | Function    :   7.3inch e-Paper Spectra 6 (7IN3E) driver
 ******************************************************************************/
 
-#ifndef __EPD_7IN3F_H__
-#define __EPD_7IN3F_H__
+#ifndef __EPD_7IN3_H__
+#define __EPD_7IN3_H__
 
 #include "epdif.h"
 
@@ -43,39 +17,18 @@
 #define UDOUBLE  unsigned long
 
 /**********************************
-Color Index for EPD_7IN3E
+Color Index for EPD_7IN3E (Spectra 6)
 **********************************/
 #define EPD_7IN3E_BLACK   0x0   /// 000
 #define EPD_7IN3E_WHITE   0x1   /// 001
 #define EPD_7IN3E_YELLOW  0x2   /// 010
 #define EPD_7IN3E_RED     0x3   /// 011
-// #define EPD_7IN3E_ORANGE  0x4   /// 100
 #define EPD_7IN3E_BLUE    0x5   /// 101
 #define EPD_7IN3E_GREEN   0x6   /// 110
 
-/**********************************
-Color Index for EPD_7IN3F
-**********************************/
-#define EPD_7IN3F_BLACK   0x0	/// 000
-#define EPD_7IN3F_WHITE   0x1	///	001
-#define EPD_7IN3F_GREEN   0x2	///	010
-#define EPD_7IN3F_BLUE    0x3	///	011
-#define EPD_7IN3F_RED     0x4	///	100
-#define EPD_7IN3F_YELLOW  0x5	///	101
-#define EPD_7IN3F_ORANGE  0x6	///	110
-#define EPD_7IN3F_CLEAN   0x7
-
-//Which display type to use
-// #define DISPLAY_TYPE_F
-#define DISPLAY_TYPE_E
-
-#if defined(DISPLAY_TYPE_F)
-    #define EPD_WHITE EPD_7IN3F_WHITE
-    #define EPD_RED EPD_7IN3F_RED
-#elif defined(DISPLAY_TYPE_E)
-    #define EPD_WHITE EPD_7IN3E_WHITE
-    #define EPD_RED EPD_7IN3E_RED
-#endif
+// Convenience aliases
+#define EPD_WHITE EPD_7IN3E_WHITE
+#define EPD_RED   EPD_7IN3E_RED
 
 
 
@@ -88,7 +41,7 @@ public:
 	void TurnOnDisplay(void);
     void Reset(void);
     void EPD_7IN3F_Display(const UBYTE *image);
-    void EPD_7IN3F_Display_part(const UBYTE *image, UWORD xstart, UWORD ystart, 
+    void EPD_7IN3F_Display_part(const UBYTE *image, UWORD xstart, UWORD ystart,
                                  UWORD image_width, UWORD image_heigh);
     void EPD_7IN3F_Draw_Blank(UWORD rows, UWORD cols, UBYTE color);
     // void EPD_7IN3F_Show7Block(void);
@@ -106,6 +59,6 @@ private:
     unsigned long height;
 };
 
-#endif /* EPD5IN83B_HD_H */
+#endif /* __EPD_7IN3_H__ */
 
 /* END OF FILE */
