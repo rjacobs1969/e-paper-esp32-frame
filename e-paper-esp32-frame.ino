@@ -148,6 +148,14 @@ void setup() {
   delay(10); // Feed the watchdog — setup() may have been running close to the 5 s WDT limit
   drawImage(file); // Display the file
 
+  // Wait one minute, then apply a yellow rectangular partial update
+  //delay(60 * 1000);
+  //Serial.println("Applying yellow partial rectangle at 100,400,600,20");
+  // Wake the display (SPI already running, so skip IfInit) and do partial update
+  //epd.WakeUp();
+  //epd.PartialUpdate(100, 400, 600, 20, EPD_7IN3E_YELLOW);
+  epd.Sleep();
+
   digitalWrite(TRANSISTOR_PIN, HIGH); // Turn off external components
 
   preferences.end();

@@ -30,6 +30,7 @@
 ******************************************************************************/
 
 #include <stdlib.h>
+#include <Arduino.h>
 #include "epd7in3combined.h"
 
 Epd::~Epd() {
@@ -49,7 +50,9 @@ function :  Initialize the e-Paper register
 parameter:
 ******************************************************************************/
 int Epd::Init(void) {
+    Serial.println("EPD Init: starting");
     if (IfInit() != 0) {
+        Serial.println("EPD Init: IfInit failed");
         return -1;
     }
     Reset();
@@ -119,6 +122,7 @@ int Epd::Init(void) {
     SendCommand(0xE3);    // PWS
     SendData(0x2F);
 
+    Serial.println("EPD Init: completed");
     return 0;
 }
 
@@ -140,8 +144,13 @@ void Epd::SendData(unsigned char data) {
 
 void Epd::EPD_7IN3F_BusyHigh(void)// If BUSYN=0 then waiting
 {
+    unsigned long start = millis();
     while(!DigitalRead(BUSY_PIN)) {
         DelayMs(1);
+        if (millis() - start > 60000) {
+            Serial.println("EPD Busy wait timeout (60s)");
+            break;
+        }
     }
 }
 
@@ -319,9 +328,89 @@ parameter:  x, y      top-left corner (pixels)
             w, h      width and height (pixels)
             color     single Spectra-6 nibble colour to fill
 ******************************************************************************/
+/******************************************************************************
+function :  Wake the display from deep sleep without re-initialising SPI.
+            Use this instead of Init() when SPI is already running.
+******************************************************************************/
+void Epd::WakeUp(void) {
+    Serial.println("EPD WakeUp: reset + init registers");
+    Reset();
+    DelayMs(20);
+    EPD_7IN3F_BusyHigh();
+
+    SendCommand(0xAA);    // CMDH
+    SendData(0x49);
+    SendData(0x55);
+    SendData(0x20);
+    SendData(0x08);
+    SendData(0x09);
+    SendData(0x18);
+
+    SendCommand(0x01);    // PWRR
+    SendData(0x3F);
+
+    SendCommand(0x00);    // PSR
+    SendData(0x57);
+    SendData(0x69);
+
+    SendCommand(0x03);    // POFS
+    SendData(0x00);
+    SendData(0x54);
+    SendData(0x00);
+    SendData(0x44);
+
+    SendCommand(0x05);    // BTST1
+    SendData(0x40);
+    SendData(0x1F);
+    SendData(0x1F);
+    SendData(0x2C);
+
+    SendCommand(0x06);    // BTST2
+    SendData(0x6F);
+    SendData(0x1F);
+    SendData(0x17);
+    SendData(0x49);
+
+    SendCommand(0x08);    // BTST3
+    SendData(0x6F);
+    SendData(0x1F);
+    SendData(0x1F);
+    SendData(0x22);
+
+    SendCommand(0x30);    // PLL
+    SendData(0x08);
+
+    SendCommand(0x50);    // CDI
+    SendData(0x3F);
+
+    SendCommand(0x60);    // TCON
+    SendData(0x02);
+    SendData(0x00);
+
+    SendCommand(0x61);    // TRES
+    SendData(0x03);
+    SendData(0x20);
+    SendData(0x01);
+    SendData(0xE0);
+
+    SendCommand(0x82);    // T_VDCS
+    SendData(0x01);
+
+    SendCommand(0xE3);    // PWS
+    SendData(0x2F);
+
+    Serial.println("EPD WakeUp: completed");
+}
+
 void Epd::PartialUpdate(UWORD x, UWORD y, UWORD w, UWORD h, UBYTE color) {
     UWORD x_end = x + w - 1;
     UWORD y_end = y + h - 1;
+
+    Serial.print("PartialUpdate called: x="); Serial.print(x);
+    Serial.print(" y="); Serial.print(y);
+    Serial.print(" w="); Serial.print(w);
+    Serial.print(" h="); Serial.print(h);
+    Serial.print(" color=0x"); Serial.println(color, HEX);
 
     SendCommand(0x83);  // PARTIAL_WINDOW
     SendData((x >> 8) & 0x03);
@@ -349,9 +438,12 @@ void Epd::PartialUpdate(UWORD x, UWORD y, UWORD w, UWORD h, UBYTE color) {
             }
             SendData(data);
         }
+        DelayMs(1); // small pause to let the controller process rows
     }
 
     TurnOnDisplayPartial();
+
+    Serial.println("PartialUpdate: TurnOnDisplayPartial completed");
 }
 
 

@@ -51,6 +51,7 @@ public:
     void Clear(UBYTE color);
     void PartialUpdate(UWORD x, UWORD y, UWORD w, UWORD h, UBYTE color);
     void TurnOnDisplayPartial(void);
+    void WakeUp(void);
 
 private:
     unsigned int reset_pin;
