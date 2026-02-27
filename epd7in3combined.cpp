@@ -289,6 +289,71 @@ void Epd::Sleep(void) {
 	DigitalWrite(RST_PIN, 0); // Reset
 }
 
+/******************************************************************************
+function :  Power-on / refresh / power-off sequence for partial updates
+******************************************************************************/
+void Epd::TurnOnDisplayPartial(void) {
+    EPD_7IN3F_BusyHigh();
+
+    SendCommand(0x04);  // POWER_ON
+    EPD_7IN3F_BusyHigh();
+
+    SendCommand(0x06);  // BTST2
+    SendData(0x6F);
+    SendData(0x1F);
+    SendData(0x17);
+    SendData(0x49);
+
+    SendCommand(0x12);  // DISPLAY_REFRESH
+    SendData(0x00);
+    EPD_7IN3F_BusyHigh();
+
+    SendCommand(0x02);  // POWER_OFF
+    SendData(0x00);
+    EPD_7IN3F_BusyHigh();
+}
+
+/******************************************************************************
+function :  Partial update — refresh only a rectangular region of the display
+parameter:  x, y      top-left corner (pixels)
+            w, h      width and height (pixels)
+            color     single Spectra-6 nibble colour to fill
+******************************************************************************/
+void Epd::PartialUpdate(UWORD x, UWORD y, UWORD w, UWORD h, UBYTE color) {
+    UWORD x_end = x + w - 1;
+    UWORD y_end = y + h - 1;
+
+    SendCommand(0x83);  // PARTIAL_WINDOW
+    SendData((x >> 8) & 0x03);
+    SendData(x & 0xFF);
+    SendData((x_end >> 8) & 0x03);
+    SendData(x_end & 0xFF);
+    SendData((y >> 8) & 0x03);
+    SendData(y & 0xFF);
+    SendData((y_end >> 8) & 0x03);
+    SendData(y_end & 0xFF);
+    SendData(0x01);
+
+    EPD_7IN3F_BusyHigh();
+
+    SendCommand(0x10);  // DTM — start data
+    SendData(0x00);     // DDX = 1 (2-bit per pixel mode indicator)
+
+    for (UWORD row = 0; row < h; row++) {
+        for (UWORD col = 0; col < w; col += 2) {
+            UBYTE data;
+            if (col + 1 < w) {
+                data = (color << 4) | (color & 0x0F);
+            } else {
+                data = (color << 4);
+            }
+            SendData(data);
+        }
+    }
+
+    TurnOnDisplayPartial();
+}
+
 
 
 /* END OF FILE */

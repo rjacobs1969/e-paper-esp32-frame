@@ -49,6 +49,8 @@ public:
     void SendData(unsigned char data);
     void Sleep(void);
     void Clear(UBYTE color);
+    void PartialUpdate(UWORD x, UWORD y, UWORD w, UWORD h, UBYTE color);
+    void TurnOnDisplayPartial(void);
 
 private:
     unsigned int reset_pin;
